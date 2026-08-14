@@ -5,23 +5,8 @@
 
 // =====================================================
 // RF HUNTER
-// Seeed Studio XIAO ESP32-S3
-//
-// WOKWI CONNECTIONS
-//
-// AD8318 simulator (POT)
-// POT SIG  -> D0 / GPIO1
-//
-// OLED
-// SDA -> D4 / GPIO5
-// SCL -> D5 / GPIO6
-//
-// BUTTONS
-// Button 1 -> D9 / GPIO10
-// Button 2 -> D8 / GPIO8
-// Button 3 -> D7 / GPIO44
+// XIAO ESP32-S3 + OLED + AD8318 SIMULATOR + BUZZER
 // =====================================================
-
 
 // =====================================================
 // OLED
@@ -31,8 +16,8 @@
 #define SCREEN_HEIGHT 64
 #define OLED_ADDR 0x3C
 
-#define OLED_SDA 5
-#define OLED_SCL 6
+#define OLED_SDA 5     // D4
+#define OLED_SCL 6     // D5
 
 Adafruit_SSD1306 display(
   SCREEN_WIDTH,
@@ -43,20 +28,23 @@ Adafruit_SSD1306 display(
 
 
 // =====================================================
-// PIN DEFINITIONS
+// PIN MAPPING
 // =====================================================
 
-// POT simulates AD8318 VOUT
-#define RF_SENSOR_PIN 1       // D0 = GPIO1
+// AD8318 simulated by potentiometer
+#define RF_SENSOR_PIN 1     // D0
 
-// Buttons according to your diagram.json
-#define BUTTON_UP 10          // D9 = GPIO10
-#define BUTTON_DOWN 8         // D8 = GPIO8
-#define BUTTON_MODE 44        // D7 = GPIO44
+// Buttons
+#define BUTTON_UP      10   // D9
+#define BUTTON_DOWN     8   // D8
+#define BUTTON_CAL      44   // D7
+
+// Buzzer
+#define BUZZER_PIN     7    // D10
 
 
 // =====================================================
-// ADC SETTINGS
+// ADC
 // =====================================================
 
 #define ADC_MAX 4095.0
@@ -77,7 +65,7 @@ long total = 0;
 
 
 // =====================================================
-// RF BASELINE
+// BASELINE
 // =====================================================
 
 int baselineRaw = 0;
@@ -90,10 +78,6 @@ int maxRaw = 0;
 // =====================================================
 // SENSITIVITY
 // =====================================================
-//
-// Smaller value = MORE sensitive
-// Larger value = LESS sensitive
-//
 
 int sensitivity = 100;
 
@@ -102,6 +86,14 @@ const int MIN_SENSITIVITY = 20;
 const int MAX_SENSITIVITY = 500;
 
 const int SENSITIVITY_STEP = 20;
+
+
+// =====================================================
+// BUZZER SETTINGS
+// =====================================================
+
+// Buzzer starts at this signal strength
+const int BUZZER_THRESHOLD = 6;
 
 
 // =====================================================
@@ -116,28 +108,41 @@ const unsigned long BUTTON_DELAY = 200;
 // =====================================================
 // AD8318 APPROXIMATE MODEL
 // =====================================================
-//
-// The potentiometer is being used to simulate
-// the AD8318 VOUT.
-//
-// POT:
-//     0V -> 3.3V
-//
-// AD8318:
-//     Higher RF power -> lower VOUT
-//     Lower RF power  -> higher VOUT
-//
-// These values are only an approximation.
-// Actual AD8318 modules should be calibrated.
-// =====================================================
 
 const float AD8318_SLOPE = -25.0;
 
 const float AD8318_INTERCEPT = 20.0;
 
-void calibrateBaseline();
+
 // =====================================================
-// ADC -> VOLTAGE
+// FUNCTION PROTOTYPES
+// =====================================================
+
+void calibrateBaseline();
+
+void checkButtons();
+
+int calculateSignalStrength(int average);
+
+void updateDisplay(
+  int average,
+  float voltage,
+  float dBm,
+  int signalStrength
+);
+
+void updateBuzzer(int signalStrength);
+
+void printSerial(
+  int average,
+  float voltage,
+  float dBm,
+  int strength
+);
+
+
+// =====================================================
+// RAW -> VOLTAGE
 // =====================================================
 
 float rawToVoltage(int raw)
@@ -152,28 +157,15 @@ float rawToVoltage(int raw)
 
 float voltageToDbm(float voltage)
 {
-  /*
-     Approximate relationship:
-
-     dBm = VOUT / slope + intercept
-
-     Because the AD8318 output decreases
-     as RF power increases.
-  */
-
   float dBm =
     (voltage / AD8318_SLOPE)
     + AD8318_INTERCEPT;
-
-
-  // Limit display range
 
   if (dBm < -60.0)
     dBm = -60.0;
 
   if (dBm > 0.0)
     dBm = 0.0;
-
 
   return dBm;
 }
@@ -189,13 +181,13 @@ void setup()
 
   delay(1000);
 
-
   Serial.println();
   Serial.println("==============================");
   Serial.println("       RF HUNTER");
   Serial.println("==============================");
   Serial.println("XIAO ESP32-S3");
-  Serial.println("AD8318 simulated by POT");
+  Serial.println("AD8318 Simulator");
+  Serial.println("Buzzer: D10");
   Serial.println("==============================");
 
 
@@ -208,7 +200,6 @@ void setup()
     INPUT
   );
 
-
   pinMode(
     BUTTON_UP,
     INPUT_PULLUP
@@ -220,8 +211,30 @@ void setup()
   );
 
   pinMode(
-    BUTTON_MODE,
+    BUTTON_CAL,
     INPUT_PULLUP
+  );
+
+  pinMode(
+    BUZZER_PIN,
+    OUTPUT
+  );
+
+  digitalWrite(
+    BUZZER_PIN,
+    LOW
+  );
+
+
+  // ===================================================
+  // ADC
+  // ===================================================
+
+  analogReadResolution(12);
+
+  analogSetPinAttenuation(
+    RF_SENSOR_PIN,
+    ADC_11db
   );
 
 
@@ -280,14 +293,73 @@ void setup()
   );
 
 
+  display.setCursor(0, 45);
+
+  display.println(
+    "Starting..."
+  );
+
+
   display.display();
 
   delay(1500);
 
 
   // ===================================================
-  // CALIBRATION
+  // INITIAL CALIBRATION
   // ===================================================
+
+  calibrateBaseline();
+
+
+  display.clearDisplay();
+
+  display.setCursor(0, 0);
+
+  display.println(
+    "RF HUNTER READY"
+  );
+
+  display.setCursor(0, 15);
+
+  display.print(
+    "Baseline: "
+  );
+
+  display.println(
+    baselineRaw
+  );
+
+  display.setCursor(0, 28);
+
+  display.print(
+    "Buzz >= "
+  );
+
+  display.print(
+    BUZZER_THRESHOLD
+  );
+
+  display.println(
+    "/10"
+  );
+
+  display.display();
+
+  delay(1500);
+}
+
+
+// =====================================================
+// CALIBRATE
+// =====================================================
+
+void calibrateBaseline()
+{
+  Serial.println(
+    "Calibrating baseline..."
+  );
+
 
   display.clearDisplay();
 
@@ -297,27 +369,19 @@ void setup()
     "CALIBRATING..."
   );
 
-
   display.setCursor(0, 15);
 
   display.println(
-    "Set RF environment"
+    "Keep RF quiet"
   );
 
-
-  display.setCursor(0, 27);
+  display.setCursor(0, 28);
 
   display.println(
-    "to quiet"
+    "Please wait..."
   );
-
 
   display.display();
-
-
-  Serial.println(
-    "Calibrating..."
-  );
 
 
   long sum = 0;
@@ -344,7 +408,12 @@ void setup()
     baselineRaw;
 
 
-  // Initialize moving average
+  // Reset moving average
+
+  total = 0;
+
+  readIndex = 0;
+
 
   for (
     int i = 0;
@@ -354,12 +423,10 @@ void setup()
   {
     readings[i] =
       baselineRaw;
+
+    total +=
+      baselineRaw;
   }
-
-
-  total =
-    (long)baselineRaw *
-    NUM_READINGS;
 
 
   Serial.print(
@@ -371,45 +438,7 @@ void setup()
   );
 
 
-  // ===================================================
-  // READY
-  // ===================================================
-
-  display.clearDisplay();
-
-
-  display.setCursor(0, 0);
-
-  display.println(
-    "RF HUNTER READY"
-  );
-
-
-  display.setCursor(0, 15);
-
-  display.print(
-    "Baseline: "
-  );
-
-  display.println(
-    baselineRaw
-  );
-
-
-  display.setCursor(0, 27);
-
-  display.print(
-    "Sensitivity: "
-  );
-
-  display.println(
-    sensitivity
-  );
-
-
-  display.display();
-
-  delay(1500);
+  noTone(BUZZER_PIN);
 }
 
 
@@ -511,99 +540,15 @@ void checkButtons()
 
   if (
     digitalRead(
-      BUTTON_MODE
+      BUTTON_CAL
     ) == LOW
   )
   {
-    Serial.println(
-      "Recalibrating..."
-    );
-
-
     calibrateBaseline();
-
 
     lastButtonTime =
       millis();
   }
-}
-
-
-// =====================================================
-// CALIBRATION FUNCTION
-// =====================================================
-
-void calibrateBaseline()
-{
-  display.clearDisplay();
-
-  display.setCursor(0, 0);
-
-  display.println(
-    "RECALIBRATING..."
-  );
-
-  display.setCursor(0, 15);
-
-  display.println(
-    "Keep RF quiet"
-  );
-
-  display.display();
-
-
-  long sum = 0;
-
-
-  for (int i = 0; i < 100; i++)
-  {
-    sum += analogRead(
-      RF_SENSOR_PIN
-    );
-
-    delay(10);
-  }
-
-
-  baselineRaw =
-    sum / 100;
-
-
-  // Reset moving average
-
-  total = 0;
-
-  readIndex = 0;
-
-
-  for (
-    int i = 0;
-    i < NUM_READINGS;
-    i++
-  )
-  {
-    readings[i] =
-      baselineRaw;
-
-    total +=
-      baselineRaw;
-  }
-
-
-  minRaw =
-    baselineRaw;
-
-  maxRaw =
-    baselineRaw;
-
-
-  Serial.print(
-    "New baseline = "
-  );
-
-  Serial.println(
-    baselineRaw
-  );
 }
 
 
@@ -616,7 +561,7 @@ int calculateSignalStrength(
 )
 {
   /*
-     AD8318 behavior:
+     AD8318:
 
      Strong RF
         ↓
@@ -624,9 +569,8 @@ int calculateSignalStrength(
         ↓
      Lower ADC
         ↓
-     Higher signal strength
+     Higher strength
   */
-
 
   int strength =
     map(
@@ -651,6 +595,66 @@ int calculateSignalStrength(
 
 
 // =====================================================
+// BUZZER
+// =====================================================
+
+void updateBuzzer(
+  int signalStrength
+)
+{
+  // Below threshold = silent
+
+  if (
+    signalStrength <
+    BUZZER_THRESHOLD
+  )
+  {
+    noTone(
+      BUZZER_PIN
+    );
+
+    return;
+  }
+
+
+  /*
+     Signal 6:
+       slow beep
+
+     Signal 10:
+       fast/high beep
+  */
+
+
+  int frequency =
+    map(
+      signalStrength,
+      BUZZER_THRESHOLD,
+      10,
+      700,
+      2200
+    );
+
+
+  int duration =
+    map(
+      signalStrength,
+      BUZZER_THRESHOLD,
+      10,
+      100,
+      50
+    );
+
+
+  tone(
+    BUZZER_PIN,
+    frequency,
+    duration
+  );
+}
+
+
+// =====================================================
 // OLED
 // =====================================================
 
@@ -663,11 +667,9 @@ void updateDisplay(
 {
   display.clearDisplay();
 
-
   display.setTextColor(
     SSD1306_WHITE
   );
-
 
   display.setTextSize(1);
 
@@ -765,7 +767,7 @@ void updateDisplay(
 
 
   // ===================================================
-  // SIGNAL STRENGTH
+  // STRENGTH
   // ===================================================
 
   display.setCursor(
@@ -784,6 +786,32 @@ void updateDisplay(
   display.print(
     "/10"
   );
+
+
+  // ===================================================
+  // BUZZER STATUS
+  // ===================================================
+
+  display.setCursor(
+    75,
+    34
+  );
+
+  if (
+    signalStrength >=
+    BUZZER_THRESHOLD
+  )
+  {
+    display.print(
+      "ALERT!"
+    );
+  }
+  else
+  {
+    display.print(
+      "QUIET"
+    );
+  }
 
 
   // ===================================================
@@ -849,7 +877,7 @@ void updateDisplay(
 
 
 // =====================================================
-// SERIAL DEBUG
+// SERIAL
 // =====================================================
 
 void printSerial(
@@ -901,9 +929,24 @@ void printSerial(
     "  Strength="
   );
 
-  Serial.println(
+  Serial.print(
     strength
   );
+
+
+  if (
+    strength >=
+    BUZZER_THRESHOLD
+  )
+  {
+    Serial.println(
+      "  *** RF ALERT ***"
+    );
+  }
+  else
+  {
+    Serial.println();
+  }
 }
 
 
@@ -913,9 +956,7 @@ void printSerial(
 
 void loop()
 {
-  // ===================================================
-  // BUTTONS
-  // ===================================================
+  // Buttons
 
   checkButtons();
 
@@ -986,7 +1027,7 @@ void loop()
 
 
   // ===================================================
-  // CONVERSION
+  // CONVERT
   // ===================================================
 
   float voltage =
@@ -1031,6 +1072,15 @@ void loop()
     average,
     voltage,
     dBm,
+    signalStrength
+  );
+
+
+  // ===================================================
+  // BUZZER
+  // ===================================================
+
+  updateBuzzer(
     signalStrength
   );
 
