@@ -7,7 +7,15 @@
 // =====================================================
 // RF HUNTER
 // XIAO ESP32-S3 + OLED + AD8318 SIMULATOR + BUZZER
+//
+// LED RING:
+// SIMPLE ON/OFF ONLY
+//
+// BUZZER:
+// ON at signal strength >= 6
+// OFF immediately below 6
 // =====================================================
+
 
 // =====================================================
 // OLED
@@ -38,7 +46,6 @@ Adafruit_SSD1306 display(
 
 // -----------------------------------------------------
 // BUTTONS
-// IMPORTANT: XIAO ESP32-S3 D labels != GPIO numbers
 //
 // D8  = GPIO7
 // D9  = GPIO8
@@ -107,9 +114,24 @@ const int SENSITIVITY_STEP = 20;
 
 const int BUZZER_THRESHOLD = 6;
 
+bool buzzerActive = false;
+
 
 // =====================================================
-// LED RING / SETTINGS MENU
+// LED RING
+// =====================================================
+//
+// LED ring has ONLY ONE JOB:
+//
+// ON  = all LEDs ON
+// OFF = all LEDs OFF
+//
+// It does NOT:
+// - show RF strength
+// - change color with RF
+// - react to buzzer
+// - react to RF module
+// - run animations
 // =====================================================
 
 Adafruit_NeoPixel ledRing(
@@ -119,14 +141,28 @@ Adafruit_NeoPixel ledRing(
 );
 
 bool ledRingEnabled = true;
+
+
+// =====================================================
+// RF MODULE
+// =====================================================
+
 bool rfModuleEnabled = true;
+
+
+// =====================================================
+// SETTINGS MENU
+// =====================================================
 
 bool menuActive = false;
 
 int menuIndex = 0;
 
 const unsigned long SELECT_HOLD_TIME = 800;
+
 const unsigned long MENU_TIMEOUT = 5000;
+
+unsigned long lastMenuInteraction = 0;
 
 
 // =====================================================
@@ -134,17 +170,18 @@ const unsigned long MENU_TIMEOUT = 5000;
 // =====================================================
 
 // SELECT
-bool selectState = HIGH;
 bool lastSelectState = HIGH;
 
 unsigned long selectPressStart = 0;
 
 // UP
 bool lastUpState = HIGH;
+
 unsigned long lastUpTime = 0;
 
 // DOWN
 bool lastDownState = HIGH;
+
 unsigned long lastDownTime = 0;
 
 // General debounce
@@ -152,17 +189,11 @@ const unsigned long BUTTON_DEBOUNCE = 50;
 
 
 // =====================================================
-// MENU TIMEOUT
-// =====================================================
-
-unsigned long lastMenuInteraction = 0;
-
-
-// =====================================================
 // AD8318 APPROXIMATE MODEL
 // =====================================================
 
 const float AD8318_SLOPE = -25.0;
+
 const float AD8318_INTERCEPT = 20.0;
 
 
@@ -175,10 +206,14 @@ void calibrateBaseline();
 void checkButtons();
 
 void handleNormalButtons();
+
 void handleMenuButtons();
+
 void handleSelectButton();
 
-int calculateSignalStrength(int average);
+int calculateSignalStrength(
+  int average
+);
 
 void updateDisplay(
   int average,
@@ -187,7 +222,9 @@ void updateDisplay(
   int signalStrength
 );
 
-void updateBuzzer(int signalStrength);
+void updateBuzzer(
+  int signalStrength
+);
 
 void printSerial(
   int average,
@@ -196,9 +233,7 @@ void printSerial(
   int strength
 );
 
-void startupLedAnimation();
-
-void updateLedRing(int signalStrength);
+void updateLedRing();
 
 void enterMenu();
 
@@ -213,7 +248,10 @@ void showMenu();
 
 float rawToVoltage(int raw)
 {
-  return ((float)raw / ADC_MAX) * ADC_VOLTAGE;
+  return (
+    ((float)raw / ADC_MAX)
+    * ADC_VOLTAGE
+  );
 }
 
 
@@ -228,12 +266,62 @@ float voltageToDbm(float voltage)
     + AD8318_INTERCEPT;
 
   if (dBm < -60.0)
+  {
     dBm = -60.0;
+  }
 
   if (dBm > 0.0)
+  {
     dBm = 0.0;
+  }
 
   return dBm;
+}
+
+
+// =====================================================
+// LED RING
+// =====================================================
+//
+// SIMPLE ON/OFF ONLY
+//
+// This function is the ONLY place where the LED ring
+// is controlled.
+//
+// ON  -> all LEDs white
+// OFF -> all LEDs off
+// =====================================================
+
+void updateLedRing()
+{
+  if (ledRingEnabled)
+  {
+    // All LEDs ON
+
+    for (
+      int i = 0;
+      i < LED_RING_COUNT;
+      i++
+    )
+    {
+      ledRing.setPixelColor(
+        i,
+        ledRing.Color(
+          255,
+          255,
+          255
+        )
+      );
+    }
+  }
+  else
+  {
+    // All LEDs OFF
+
+    ledRing.clear();
+  }
+
+  ledRing.show();
 }
 
 
@@ -299,14 +387,16 @@ void setup()
   // ===================================================
   // LED RING
   // ===================================================
+  //
+  // No startup animation.
+  // Just apply current ON/OFF setting.
+  // ===================================================
 
   ledRing.begin();
 
-  ledRing.setBrightness(40);
+  ledRing.setBrightness(255);
 
-  ledRing.clear();
-
-  ledRing.show();
+  updateLedRing();
 
 
   // ===================================================
@@ -331,9 +421,12 @@ void setup()
   );
 
 
-  if (!display.begin(
-        SSD1306_SWITCHCAPVCC,
-        OLED_ADDR))
+  if (
+    !display.begin(
+      SSD1306_SWITCHCAPVCC,
+      OLED_ADDR
+    )
+  )
   {
     Serial.println(
       "OLED initialization failed!"
@@ -358,25 +451,37 @@ void setup()
 
   display.setTextSize(1);
 
-  display.setCursor(0, 0);
+  display.setCursor(
+    0,
+    0
+  );
 
   display.println(
     "RF HUNTER"
   );
 
-  display.setCursor(0, 15);
+  display.setCursor(
+    0,
+    15
+  );
 
   display.println(
     "XIAO ESP32-S3"
   );
 
-  display.setCursor(0, 30);
+  display.setCursor(
+    0,
+    30
+  );
 
   display.println(
     "AD8318 Simulator"
   );
 
-  display.setCursor(0, 45);
+  display.setCursor(
+    0,
+    45
+  );
 
   display.println(
     "Starting..."
@@ -385,13 +490,6 @@ void setup()
   display.display();
 
   delay(1000);
-
-
-  // ===================================================
-  // LED STARTUP ANIMATION
-  // ===================================================
-
-  startupLedAnimation();
 
 
   // ===================================================
@@ -407,13 +505,19 @@ void setup()
 
   display.clearDisplay();
 
-  display.setCursor(0, 0);
+  display.setCursor(
+    0,
+    0
+  );
 
   display.println(
     "RF HUNTER READY"
   );
 
-  display.setCursor(0, 15);
+  display.setCursor(
+    0,
+    15
+  );
 
   display.print(
     "Baseline: "
@@ -423,7 +527,10 @@ void setup()
     baselineRaw
   );
 
-  display.setCursor(0, 28);
+  display.setCursor(
+    0,
+    28
+  );
 
   display.print(
     "Buzz >= "
@@ -437,7 +544,10 @@ void setup()
     "/10"
   );
 
-  display.setCursor(0, 45);
+  display.setCursor(
+    0,
+    45
+  );
 
   display.println(
     "Hold SEL = MENU"
@@ -450,7 +560,7 @@ void setup()
 
 
 // =====================================================
-// CALIBRATE
+// CALIBRATE BASELINE
 // =====================================================
 
 void calibrateBaseline()
@@ -462,19 +572,28 @@ void calibrateBaseline()
 
   display.clearDisplay();
 
-  display.setCursor(0, 0);
+  display.setCursor(
+    0,
+    0
+  );
 
   display.println(
     "CALIBRATING..."
   );
 
-  display.setCursor(0, 15);
+  display.setCursor(
+    0,
+    15
+  );
 
   display.println(
     "Keep RF quiet"
   );
 
-  display.setCursor(0, 28);
+  display.setCursor(
+    0,
+    28
+  );
 
   display.println(
     "Please wait..."
@@ -486,7 +605,11 @@ void calibrateBaseline()
   long sum = 0;
 
 
-  for (int i = 0; i < 100; i++)
+  for (
+    int i = 0;
+    i < 100;
+    i++
+  )
   {
     sum += analogRead(
       RF_SENSOR_PIN
@@ -514,7 +637,11 @@ void calibrateBaseline()
   readIndex = 0;
 
 
-  for (int i = 0; i < NUM_READINGS; i++)
+  for (
+    int i = 0;
+    i < NUM_READINGS;
+    i++
+  )
   {
     readings[i] =
       baselineRaw;
@@ -533,156 +660,18 @@ void calibrateBaseline()
   );
 
 
-  noTone(BUZZER_PIN);
-}
+  // Make sure buzzer is OFF after calibration
 
-
-// =====================================================
-// LED RING STARTUP ANIMATION
-// =====================================================
-
-void startupLedAnimation()
-{
-  Serial.println(
-    "LED ring startup animation..."
+  noTone(
+    BUZZER_PIN
   );
 
+  digitalWrite(
+    BUZZER_PIN,
+    LOW
+  );
 
-  // Blue rotating pixel
-
-  for (int i = 0; i < LED_RING_COUNT; i++)
-  {
-    ledRing.clear();
-
-    ledRing.setPixelColor(
-      i,
-      ledRing.Color(0, 80, 255)
-    );
-
-    ledRing.show();
-
-    delay(60);
-  }
-
-
-  // Blue full ring
-
-  for (int brightness = 80;
-       brightness >= 0;
-       brightness -= 10)
-  {
-    for (int i = 0;
-         i < LED_RING_COUNT;
-         i++)
-    {
-      ledRing.setPixelColor(
-        i,
-        ledRing.Color(
-          0,
-          brightness,
-          brightness
-        )
-      );
-    }
-
-    ledRing.show();
-
-    delay(30);
-  }
-
-
-  ledRing.clear();
-
-  ledRing.show();
-}
-
-
-// =====================================================
-// LED RING SIGNAL DISPLAY
-// =====================================================
-
-void updateLedRing(int signalStrength)
-{
-  if (
-    !ledRingEnabled ||
-    !rfModuleEnabled
-  )
-  {
-    ledRing.clear();
-
-    ledRing.show();
-
-    return;
-  }
-
-
-  int lit =
-    map(
-      signalStrength,
-      0,
-      10,
-      0,
-      LED_RING_COUNT
-    );
-
-
-  lit =
-    constrain(
-      lit,
-      0,
-      LED_RING_COUNT
-    );
-
-
-  for (
-    int i = 0;
-    i < LED_RING_COUNT;
-    i++
-  )
-  {
-    if (i < lit)
-    {
-      // Green -> yellow -> red
-
-      uint8_t red =
-        map(
-          i,
-          0,
-          LED_RING_COUNT - 1,
-          0,
-          255
-        );
-
-      uint8_t green =
-        map(
-          i,
-          0,
-          LED_RING_COUNT - 1,
-          180,
-          20
-        );
-
-
-      ledRing.setPixelColor(
-        i,
-        ledRing.Color(
-          red,
-          green,
-          0
-        )
-      );
-    }
-    else
-    {
-      ledRing.setPixelColor(
-        i,
-        0
-      );
-    }
-  }
-
-
-  ledRing.show();
+  buzzerActive = false;
 }
 
 
@@ -699,7 +688,18 @@ void enterMenu()
   lastMenuInteraction =
     millis();
 
-  noTone(BUZZER_PIN);
+  // Stop buzzer while menu is open
+
+  noTone(
+    BUZZER_PIN
+  );
+
+  digitalWrite(
+    BUZZER_PIN,
+    LOW
+  );
+
+  buzzerActive = false;
 
   showMenu();
 
@@ -717,7 +717,16 @@ void exitMenu()
 {
   menuActive = false;
 
-  noTone(BUZZER_PIN);
+  noTone(
+    BUZZER_PIN
+  );
+
+  digitalWrite(
+    BUZZER_PIN,
+    LOW
+  );
+
+  buzzerActive = false;
 
   Serial.println(
     "SETTINGS MENU CLOSED"
@@ -740,6 +749,10 @@ void showMenu()
   display.setTextSize(1);
 
 
+  // ---------------------------------------------------
+  // TITLE
+  // ---------------------------------------------------
+
   display.setCursor(
     0,
     0
@@ -749,6 +762,10 @@ void showMenu()
     "SETTINGS"
   );
 
+
+  // ---------------------------------------------------
+  // LED RING
+  // ---------------------------------------------------
 
   display.setCursor(
     0,
@@ -772,6 +789,10 @@ void showMenu()
   );
 
 
+  // ---------------------------------------------------
+  // RF MODULE
+  // ---------------------------------------------------
+
   display.setCursor(
     0,
     29
@@ -793,6 +814,10 @@ void showMenu()
       : "OFF"
   );
 
+
+  // ---------------------------------------------------
+  // HELP
+  // ---------------------------------------------------
 
   display.setCursor(
     0,
@@ -848,7 +873,9 @@ void handleMenuButtons()
   // ---------------------------------------------------
 
   bool upState =
-    digitalRead(BUTTON_UP);
+    digitalRead(
+      BUTTON_UP
+    );
 
 
   if (
@@ -859,11 +886,17 @@ void handleMenuButtons()
   {
     menuIndex--;
 
-    if (menuIndex < 0)
+
+    if (
+      menuIndex < 0
+    )
+    {
       menuIndex = 1;
+    }
 
 
-    lastUpTime = now;
+    lastUpTime =
+      now;
 
     lastMenuInteraction =
       now;
@@ -881,7 +914,9 @@ void handleMenuButtons()
   // ---------------------------------------------------
 
   bool downState =
-    digitalRead(BUTTON_DOWN);
+    digitalRead(
+      BUTTON_DOWN
+    );
 
 
   if (
@@ -892,11 +927,17 @@ void handleMenuButtons()
   {
     menuIndex++;
 
-    if (menuIndex > 1)
+
+    if (
+      menuIndex > 1
+    )
+    {
       menuIndex = 0;
+    }
 
 
-    lastDownTime = now;
+    lastDownTime =
+      now;
 
     lastMenuInteraction =
       now;
@@ -928,10 +969,14 @@ void handleSelectButton()
 
 
   bool currentState =
-    digitalRead(BUTTON_SELECT);
+    digitalRead(
+      BUTTON_SELECT
+    );
 
 
-  // Button pressed
+  // ---------------------------------------------------
+  // BUTTON PRESSED
+  // ---------------------------------------------------
 
   if (
     currentState == LOW &&
@@ -943,7 +988,9 @@ void handleSelectButton()
   }
 
 
-  // Button released
+  // ---------------------------------------------------
+  // BUTTON RELEASED
+  // ---------------------------------------------------
 
   if (
     currentState == HIGH &&
@@ -951,45 +998,85 @@ void handleSelectButton()
   )
   {
     unsigned long pressTime =
-      now - selectPressStart;
+      now -
+      selectPressStart;
 
 
-    // Short press = toggle
+    // -------------------------------------------------
+    // SHORT PRESS = TOGGLE
+    // -------------------------------------------------
 
     if (
       pressTime <
       SELECT_HOLD_TIME
     )
     {
-      if (menuIndex == 0)
+      // ===============================================
+      // LED RING
+      // ===============================================
+
+      if (
+        menuIndex == 0
+      )
       {
         ledRingEnabled =
           !ledRingEnabled;
 
 
-        if (!ledRingEnabled)
-        {
-          ledRing.clear();
+        // Immediately apply LED state
 
-          ledRing.show();
-        }
+        updateLedRing();
+
+
+        Serial.print(
+          "LED RING = "
+        );
+
+        Serial.println(
+          ledRingEnabled
+            ? "ON"
+            : "OFF"
+        );
       }
+
+
+      // ===============================================
+      // RF MODULE
+      // ===============================================
+
       else
       {
         rfModuleEnabled =
           !rfModuleEnabled;
 
 
-        if (!rfModuleEnabled)
+        if (
+          !rfModuleEnabled
+        )
         {
           noTone(
             BUZZER_PIN
           );
 
-          ledRing.clear();
+          digitalWrite(
+            BUZZER_PIN,
+            LOW
+          );
 
-          ledRing.show();
+          buzzerActive =
+            false;
         }
+
+
+        Serial.print(
+          "RF MODULE = "
+        );
+
+        Serial.println(
+          rfModuleEnabled
+            ? "ON"
+            : "OFF"
+        );
       }
 
 
@@ -1021,7 +1108,9 @@ void handleNormalButtons()
   // ---------------------------------------------------
 
   bool upState =
-    digitalRead(BUTTON_UP);
+    digitalRead(
+      BUTTON_UP
+    );
 
 
   if (
@@ -1067,7 +1156,9 @@ void handleNormalButtons()
   // ---------------------------------------------------
 
   bool downState =
-    digitalRead(BUTTON_DOWN);
+    digitalRead(
+      BUTTON_DOWN
+    );
 
 
   if (
@@ -1120,10 +1211,12 @@ void checkButtons()
 
 
   // ---------------------------------------------------
-  // MENU
+  // MENU ACTIVE
   // ---------------------------------------------------
 
-  if (menuActive)
+  if (
+    menuActive
+  )
   {
     handleMenuButtons();
 
@@ -1136,7 +1229,9 @@ void checkButtons()
   // ---------------------------------------------------
 
   bool currentSelect =
-    digitalRead(BUTTON_SELECT);
+    digitalRead(
+      BUTTON_SELECT
+    );
 
 
   if (
@@ -1156,6 +1251,7 @@ void checkButtons()
   )
   {
     enterMenu();
+
 
     // Prevent immediate re-trigger
 
@@ -1224,54 +1320,97 @@ int calculateSignalStrength(
 // =====================================================
 // BUZZER
 // =====================================================
+//
+// IMPORTANT:
+//
+// >= 6  -> buzzer ON
+// <  6  -> buzzer OFF immediately
+//
+// No timed tone.
+// No repeated tone() calls.
+// =====================================================
 
 void updateBuzzer(
   int signalStrength
 )
 {
+  // ---------------------------------------------------
+  // SIGNAL ABOVE THRESHOLD
+  // ---------------------------------------------------
+
   if (
-    signalStrength <
+    signalStrength >=
     BUZZER_THRESHOLD
+  )
+  {
+    if (
+      !buzzerActive
+    )
+    {
+      buzzerActive =
+        true;
+
+
+      tone(
+        BUZZER_PIN,
+        1500
+      );
+
+
+      Serial.println(
+        "*** BUZZER ON ***"
+      );
+    }
+
+
+    return;
+  }
+
+
+  // ---------------------------------------------------
+  // SIGNAL BELOW THRESHOLD
+  // ---------------------------------------------------
+
+  if (
+    buzzerActive
   )
   {
     noTone(
       BUZZER_PIN
     );
 
-    return;
+    digitalWrite(
+      BUZZER_PIN,
+      LOW
+    );
+
+    buzzerActive =
+      false;
+
+
+    Serial.println(
+      "*** BUZZER OFF ***"
+    );
   }
+  else
+  {
+    // Extra safety:
+    // keep buzzer physically LOW
 
-
-  int frequency =
-    map(
-      signalStrength,
-      BUZZER_THRESHOLD,
-      10,
-      700,
-      2200
+    noTone(
+      BUZZER_PIN
     );
 
-
-  int duration =
-    map(
-      signalStrength,
-      BUZZER_THRESHOLD,
-      10,
-      100,
-      50
+    digitalWrite(
+      BUZZER_PIN,
+      LOW
     );
-
-
-  tone(
-    BUZZER_PIN,
-    frequency,
-    duration
-  );
+  }
 }
 
 
 // =====================================================
-// OLED
+// OLED DISPLAY
 // =====================================================
 
 void updateDisplay(
@@ -1290,7 +1429,9 @@ void updateDisplay(
   display.setTextSize(1);
 
 
+  // ---------------------------------------------------
   // TITLE
+  // ---------------------------------------------------
 
   display.setCursor(
     0,
@@ -1302,7 +1443,9 @@ void updateDisplay(
   );
 
 
+  // ---------------------------------------------------
   // RAW
+  // ---------------------------------------------------
 
   display.setCursor(
     0,
@@ -1318,7 +1461,9 @@ void updateDisplay(
   );
 
 
+  // ---------------------------------------------------
   // VOLTAGE
+  // ---------------------------------------------------
 
   display.setCursor(
     75,
@@ -1335,7 +1480,9 @@ void updateDisplay(
   );
 
 
+  // ---------------------------------------------------
   // dBm
+  // ---------------------------------------------------
 
   display.setCursor(
     0,
@@ -1356,7 +1503,9 @@ void updateDisplay(
   );
 
 
+  // ---------------------------------------------------
   // SENSITIVITY
+  // ---------------------------------------------------
 
   display.setCursor(
     75,
@@ -1372,7 +1521,9 @@ void updateDisplay(
   );
 
 
+  // ---------------------------------------------------
   // STRENGTH
+  // ---------------------------------------------------
 
   display.setCursor(
     0,
@@ -1392,7 +1543,9 @@ void updateDisplay(
   );
 
 
+  // ---------------------------------------------------
   // STATUS
+  // ---------------------------------------------------
 
   display.setCursor(
     75,
@@ -1400,7 +1553,9 @@ void updateDisplay(
   );
 
 
-  if (!rfModuleEnabled)
+  if (
+    !rfModuleEnabled
+  )
   {
     display.print(
       "RF OFF"
@@ -1423,11 +1578,20 @@ void updateDisplay(
   }
 
 
-  // SIGNAL BARS
+  // ---------------------------------------------------
+  // OLED SIGNAL BARS
+  //
+  // IMPORTANT:
+  // These are OLED graphics.
+  // They have NOTHING to do with NeoPixel ring.
+  // ---------------------------------------------------
 
   int barWidth = 10;
+
   int spacing = 2;
+
   int startX = 4;
+
   int baseY = 62;
 
 
@@ -1567,7 +1731,9 @@ void loop()
   // MENU ACTIVE
   // ---------------------------------------------------
 
-  if (menuActive)
+  if (
+    menuActive
+  )
   {
     delay(10);
 
@@ -1577,9 +1743,15 @@ void loop()
 
   // ---------------------------------------------------
   // RF MODULE OFF
+  //
+  // IMPORTANT:
+  // LED ring is NOT touched here.
+  // LED ring keeps its selected ON/OFF state.
   // ---------------------------------------------------
 
-  if (!rfModuleEnabled)
+  if (
+    !rfModuleEnabled
+  )
   {
     updateDisplay(
       0,
@@ -1588,11 +1760,19 @@ void loop()
       0
     );
 
-    updateLedRing(0);
 
     noTone(
       BUZZER_PIN
     );
+
+    digitalWrite(
+      BUZZER_PIN,
+      LOW
+    );
+
+    buzzerActive =
+      false;
+
 
     delay(100);
 
@@ -1710,15 +1890,6 @@ void loop()
 
 
   // ---------------------------------------------------
-  // LED RING
-  // ---------------------------------------------------
-
-  updateLedRing(
-    signalStrength
-  );
-
-
-  // ---------------------------------------------------
   // BUZZER
   // ---------------------------------------------------
 
@@ -1726,6 +1897,14 @@ void loop()
     signalStrength
   );
 
+
+  // ---------------------------------------------------
+  // LED RING
+  //
+  // NOTHING HERE.
+  //
+  // The LED ring is controlled ONLY from the menu.
+  // ---------------------------------------------------
 
   delay(50);
 }
