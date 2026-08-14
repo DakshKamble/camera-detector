@@ -13,7 +13,34 @@
 //
 // BUZZER:
 // ON at signal strength >= 6
-// OFF immediately below 6
+// OFF at signal strength <= 4 (hysteresis to stop flicker)
+//
+// -----------------------------------------------------
+// FIXES APPLIED (from potentiometer test bench issues):
+//
+// 1) DIRECTION FIX
+//    Original code modeled a REAL AD8318: stronger RF ->
+//    LOWER voltage -> LOWER ADC -> HIGHER strength. That
+//    means turning a pot UP (raising raw ADC) was read as
+//    a WEAKER signal, which is why "raw goes up but never
+//    triggers" happened. For potentiometer bench testing,
+//    we now use: pot UP -> raw UP -> strength UP.
+//    (If you later connect a real AD8318, see the note
+//    inside calculateSignalStrength() to flip it back.)
+//
+// 2) SENSITIVITY WINDOW FIX
+//    Default sensitivity (100) squeezed the entire 0-10
+//    strength range into ~2.4% of the ADC's 0-4095 range,
+//    so tiny pot movement / noise blew straight through it
+//    ("shoots straight up"). Sensitivity range and default
+//    increased so a real pot sweep is gradual.
+//
+// 3) BUZZER HYSTERESIS FIX
+//    Buzzer used to snap on/off exactly at the threshold,
+//    which caused flicker/chatter near strength == 6 due to
+//    noise. It now turns ON at >= 6 and only turns back OFF
+//    at <= 4, so a decreasing pot doesn't "still keep
+//    buzzing" from jitter around the threshold.
 // =====================================================
 
 
@@ -100,19 +127,34 @@ int maxRaw = 0;
 // =====================================================
 // SENSITIVITY
 // =====================================================
+//
+// NOTE: These were widened for potentiometer bench testing.
+// The old values (100 / 20 / 500 / 20) packed the whole
+// 0-10 strength range into a couple percent of ADC travel,
+// which made the reading jump straight to max with barely
+// any pot movement. These new values spread it across a
+// much more realistic chunk of the 0-4095 ADC range so a
+// pot turn gives a smooth, gradual strength change.
+//
+// If you switch back to a real AD8318 with an actual RF
+// source, you'll likely want to tune these back down since
+// real RF swings are smaller and faster than a hand-turned
+// pot.
+// =====================================================
 
-int sensitivity = 100;
+int sensitivity = 1500;
 
-const int MIN_SENSITIVITY = 20;
-const int MAX_SENSITIVITY = 500;
-const int SENSITIVITY_STEP = 20;
+const int MIN_SENSITIVITY = 200;
+const int MAX_SENSITIVITY = 3500;
+const int SENSITIVITY_STEP = 100;
 
 
 // =====================================================
 // BUZZER
 // =====================================================
 
-const int BUZZER_THRESHOLD = 6;
+const int BUZZER_ON_THRESHOLD  = 6;  // turn ON at/above this
+const int BUZZER_OFF_THRESHOLD = 4;  // turn OFF at/below this (hysteresis gap)
 
 bool buzzerActive = false;
 
@@ -537,7 +579,7 @@ void setup()
   );
 
   display.print(
-    BUZZER_THRESHOLD
+    BUZZER_ON_THRESHOLD
   );
 
   display.println(
@@ -1283,15 +1325,27 @@ int calculateSignalStrength(
 )
 {
   /*
-     AD8318:
+     POTENTIOMETER BENCH-TEST MODEL (current):
 
-     Strong RF
+     Turning pot UP
         ↓
-     Lower VOUT
-        ↓
-     Lower ADC
+     Higher ADC (average)
         ↓
      Higher strength
+
+     This is the INVERSE of a real AD8318, where stronger
+     RF produces a LOWER output voltage / lower ADC value.
+
+     ---------------------------------------------------
+     TO SWITCH BACK TO A REAL AD8318 MODULE:
+
+     Change the map() call below back to:
+
+         map(average, baselineRaw, baselineRaw - sensitivity, 0, 10);
+
+     i.e. strength rises as 'average' falls BELOW baseline,
+     matching: Strong RF -> Lower VOUT -> Lower ADC -> Higher strength.
+     ---------------------------------------------------
   */
 
 
@@ -1299,7 +1353,7 @@ int calculateSignalStrength(
     map(
       average,
       baselineRaw,
-      baselineRaw - sensitivity,
+      baselineRaw + sensitivity,
       0,
       10
     );
@@ -1324,7 +1378,9 @@ int calculateSignalStrength(
 // IMPORTANT:
 //
 // >= 6  -> buzzer ON
-// <  6  -> buzzer OFF immediately
+// <= 4  -> buzzer OFF  (2-point hysteresis gap prevents
+//                        flicker/chatter from noise sitting
+//                        right around the threshold)
 //
 // No timed tone.
 // No repeated tone() calls.
@@ -1335,44 +1391,39 @@ void updateBuzzer(
 )
 {
   // ---------------------------------------------------
-  // SIGNAL ABOVE THRESHOLD
+  // SIGNAL AT/ABOVE ON-THRESHOLD -> TURN ON (if not already)
   // ---------------------------------------------------
 
   if (
-    signalStrength >=
-    BUZZER_THRESHOLD
+    !buzzerActive &&
+    signalStrength >= BUZZER_ON_THRESHOLD
   )
   {
-    if (
-      !buzzerActive
-    )
-    {
-      buzzerActive =
-        true;
+    buzzerActive =
+      true;
 
 
-      tone(
-        BUZZER_PIN,
-        1500
-      );
+    tone(
+      BUZZER_PIN,
+      1500
+    );
 
 
-      Serial.println(
-        "*** BUZZER ON ***"
-      );
-    }
-
+    Serial.println(
+      "*** BUZZER ON ***"
+    );
 
     return;
   }
 
 
   // ---------------------------------------------------
-  // SIGNAL BELOW THRESHOLD
+  // SIGNAL AT/BELOW OFF-THRESHOLD -> TURN OFF (if currently on)
   // ---------------------------------------------------
 
   if (
-    buzzerActive
+    buzzerActive &&
+    signalStrength <= BUZZER_OFF_THRESHOLD
   )
   {
     noTone(
@@ -1391,11 +1442,22 @@ void updateBuzzer(
     Serial.println(
       "*** BUZZER OFF ***"
     );
+
+    return;
   }
-  else
+
+
+  // ---------------------------------------------------
+  // OTHERWISE: hold current state (this is the hysteresis
+  // "dead band" between OFF_THRESHOLD and ON_THRESHOLD),
+  // but make sure the pin is physically consistent.
+  // ---------------------------------------------------
+
+  if (
+    !buzzerActive
+  )
   {
-    // Extra safety:
-    // keep buzzer physically LOW
+    // Extra safety: keep buzzer physically LOW while inactive
 
     noTone(
       BUZZER_PIN
@@ -1563,7 +1625,7 @@ void updateDisplay(
   }
   else if (
     signalStrength >=
-    BUZZER_THRESHOLD
+    BUZZER_ON_THRESHOLD
   )
   {
     display.print(
@@ -1704,7 +1766,7 @@ void printSerial(
 
   if (
     strength >=
-    BUZZER_THRESHOLD
+    BUZZER_ON_THRESHOLD
   )
   {
     Serial.println(
