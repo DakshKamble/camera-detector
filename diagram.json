@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "author": "Daksh Kamble",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-xiao-esp32-s3", "id": "esp", "top": -0.18, "left": 4.57, "attrs": {} },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn1",
+      "top": 314.6,
+      "left": 67.2,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn2",
+      "top": 353,
+      "left": 67.2,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "board-ssd1306",
+      "id": "oled1",
+      "top": 319.94,
+      "left": -86.17,
+      "attrs": { "i2cAddress": "0x3c" }
+    },
+    {
+      "type": "wokwi-pushbutton-6mm",
+      "id": "btn3",
+      "top": 391.4,
+      "left": 67.2,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "pot1",
+      "top": 318.9,
+      "left": 183.4,
+      "rotate": 180,
+      "attrs": {}
+    }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "oled1:VCC", "esp:3V3", "red", [ "v-336", "h124.95", "v47.25" ] ],
+    [ "esp:GND", "oled1:GND", "black", [ "h9.83", "v-47.25", "h-124.8" ] ],
+    [ "esp:D4", "oled1:SDA", "green", [ "h-38.45" ] ],
+    [ "esp:D5", "oled1:SCL", "green", [ "h-38.45" ] ],
+    [ "btn1:1.r", "esp:GND", "black", [ "v0", "h0.8", "v-288" ] ],
+    [ "esp:GND", "btn2:1.r", "black", [ "h38.63", "v327.15" ] ],
+    [ "esp:GND", "btn3:1.r", "black", [ "h48.23", "v365.55" ] ],
+    [ "esp:D0", "pot1:SIG", "green", [ "h-9.99", "v-66.45", "h172.8" ] ],
+    [ "pot1:VCC", "esp:3V3", "red", [ "v0" ] ],
+    [ "pot1:GND", "esp:GND", "black", [ "v0" ] ],
+    [ "btn1:2.r", "esp:D9", "green", [ "h39.2", "v-278" ] ],
+    [ "esp:D8", "btn2:2.r", "green", [ "h77.03", "v0.75" ] ],
+    [ "esp:D7", "btn3:2.r", "green", [ "v0.75", "h86.63", "v316.8" ] ]
+  ],
+  "dependencies": {}
+}
